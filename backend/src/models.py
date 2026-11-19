@@ -64,6 +64,7 @@ class Agreement(Base):
     id:Mapped[int]=mapped_column(primary_key=True)
     complaint_id:Mapped[int]=mapped_column(ForeignKey('complaints.id'))
     attribution_id:Mapped[int]=mapped_column(ForeignKey('attributions.id'))
+    energy_ledger_id:Mapped[int|None]=mapped_column(ForeignKey('energy_ledgers.id'),nullable=True)
     party_a:Mapped[str]=mapped_column(String(40))
     party_b:Mapped[str]=mapped_column(String(40))
     quiet_from:Mapped[int]=mapped_column(Integer)
@@ -111,3 +112,43 @@ class Closure(Base):
     agreement_id:Mapped[int]=mapped_column(ForeignKey('agreements.id'),unique=True)
     note:Mapped[str]=mapped_column(String(400))
     closed_at:Mapped[datetime]=mapped_column(DateTime)
+class Equipment(Base):
+    __tablename__='equipment'
+    __table_args__=(UniqueConstraint('complaint_id','name',name='equipment_name_unique'),CheckConstraint("name <> ''",name='equipment_name_present'))
+    id:Mapped[int]=mapped_column(primary_key=True)
+    complaint_id:Mapped[int]=mapped_column(ForeignKey('complaints.id'))
+    name:Mapped[str]=mapped_column(String(40))
+    kind:Mapped[str]=mapped_column(String(30),default='device')
+    note:Mapped[str]=mapped_column(String(300),default='')
+    active:Mapped[bool]=mapped_column(Boolean,default=True)
+class Calibration(Base):
+    """单台设备启停时的采样标记：同一条采样只标定单台设备，避免把混合样本当模板。"""
+    __tablename__='calibrations'
+    __table_args__=(UniqueConstraint('event_id',name='one_calibration_per_event'),UniqueConstraint('equipment_id','event_id',name='calibration_natural_key'))
+    id:Mapped[int]=mapped_column(primary_key=True)
+    complaint_id:Mapped[int]=mapped_column(ForeignKey('complaints.id'))
+    equipment_id:Mapped[int]=mapped_column(ForeignKey('equipment.id'))
+    event_id:Mapped[int]=mapped_column(ForeignKey('noise_events.id'))
+    note:Mapped[str]=mapped_column(String(300),default='')
+class EnergyLedger(Base):
+    """主管跨多条采样一次登记的一笔能量归因；client_token保证重试不重复扣减。"""
+    __tablename__='energy_ledgers'
+    __table_args__=(UniqueConstraint('client_token',name='energy_ledger_idempotent'),CheckConstraint('amount >= 0',name='ledger_amount_non_negative'))
+    id:Mapped[int]=mapped_column(primary_key=True)
+    complaint_id:Mapped[int]=mapped_column(ForeignKey('complaints.id'))
+    equipment_id:Mapped[int]=mapped_column(ForeignKey('equipment.id'))
+    client_token:Mapped[str]=mapped_column(String(80))
+    amount:Mapped[float]=mapped_column(Float)
+    note:Mapped[str]=mapped_column(String(400),default='')
+    reviewer:Mapped[str]=mapped_column(String(60))
+    created_at:Mapped[datetime]=mapped_column(default=datetime.utcnow)
+class EnergyLine(Base):
+    """一笔归因在各采样上的明细；同一笔内(采样,设备)唯一，跨笔累计超额由应用层余额校验拦截。"""
+    __tablename__='energy_lines'
+    __table_args__=(UniqueConstraint('ledger_id','event_id','equipment_id',name='line_unique_within_ledger'),CheckConstraint('amount >= 0',name='line_amount_non_negative'))
+    id:Mapped[int]=mapped_column(primary_key=True)
+    ledger_id:Mapped[int]=mapped_column(ForeignKey('energy_ledgers.id'))
+    complaint_id:Mapped[int]=mapped_column(ForeignKey('complaints.id'))
+    equipment_id:Mapped[int]=mapped_column(ForeignKey('equipment.id'))
+    event_id:Mapped[int]=mapped_column(ForeignKey('noise_events.id'))
+    amount:Mapped[float]=mapped_column(Float)

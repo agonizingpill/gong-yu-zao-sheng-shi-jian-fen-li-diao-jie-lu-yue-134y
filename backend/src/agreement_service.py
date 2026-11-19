@@ -1,11 +1,16 @@
 from sqlalchemy import select
-from .models import Attribution,Agreement,Signature,Remedy
+from .models import Attribution,Agreement,Signature,Remedy,EnergyLedger,EnergyLine
 from .common import require,lock_case,lock_agreement,get,record,dump,now
 
 def create_agreement(db,user,caseid,data):
     case=lock_case(db,caseid);require(case.status=='mediation','须先完成人工归因，再起草调解协议')
     attr=get(db,Attribution,data.attribution_id)
     require(attr.complaint_id==caseid and attr.source!='undetermined','归因须属于本卷且来源已核实')
+    ledger=None
+    if data.energy_ledger_id is not None:
+        ledger=get(db,EnergyLedger,data.energy_ledger_id)
+        require(ledger.complaint_id==caseid,'能量归因须属于本卷')
+        require(db.scalar(select(EnergyLine).where(EnergyLine.ledger_id==ledger.id)),'该能量归因没有登记成功的明细，调解不能引用')
     require(not db.scalar(select(Agreement).where(Agreement.complaint_id==caseid,Agreement.state.notin_(['cancelled','fulfilled']))),'本卷已有在途协议')
     row=Agreement(complaint_id=caseid,**data.model_dump());db.add(row);db.flush();record(db,user,'agreement.draft',row.id,caseid);db.commit();return dump(row)
 def sign(db,user,id,data):
@@ -15,9 +20,10 @@ def sign(db,user,id,data):
     row=Signature(agreement_id=id,**data.model_dump());db.add(row);record(db,user,'agreement.sign',id,data.party);db.commit();return dump(row)
 def activate(db,user,id):
     case,a=lock_agreement(db,id);require(a.state=='draft','协议不处于草案')
+    require(a.energy_ledger_id is not None,'调解只能引用登记成功的能量归因，请先在成分页登记并关联')
     signatures=db.scalars(select(Signature).where(Signature.agreement_id==id)).all()
     require({s.party for s in signatures}=={a.party_a,a.party_b},'双方均签字后协议才能生效')
-    a.state='active';a.activated_at=now(db);case.status='remedy';record(db,user,'agreement.activate',id);db.commit();return dump(a)
+    a.state='active';a.activated_at=now(db);case.status='remedy';record(db,user,'agreement.activate',id,f'ledger={a.energy_ledger_id}');db.commit();return dump(a)
 def cancel(db,user,id,note):
     case,a=lock_agreement(db,id);require(a.state=='draft','仅未生效草案可撤销')
     a.state='cancelled';case.status='mediation';record(db,user,'agreement.cancel',id,note);db.commit();return dump(a)

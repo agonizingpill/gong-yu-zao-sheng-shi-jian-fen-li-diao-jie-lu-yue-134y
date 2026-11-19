@@ -1,6 +1,7 @@
 from pydantic import BaseModel,Field,model_validator
 class AgreementInput(BaseModel):
     attribution_id:int=Field(gt=0)
+    energy_ledger_id:int|None=Field(default=None,gt=0)
     party_a:str=Field(min_length=2,max_length=40)
     party_b:str=Field(min_length=2,max_length=40)
     quiet_from:int=Field(ge=0,le=1439)
